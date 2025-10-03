@@ -126,20 +126,6 @@ def explode_by_contacts(df: pd.DataFrame, contact_idxs: list[int]) -> pd.DataFra
     exploded = exploded.drop(columns=to_drop, errors="ignore")
     return exploded
 
-def ensure_flags_series(df: pd.DataFrame) -> pd.Series:
-    """
-    Always return a valid Flags Series indexed to df.index,
-    creating/normalizing the column if missing.
-    """
-    if "Flags" in df.columns:
-        s = df["Flags"]
-        # Normalize to string dtype so later .lower() comparisons are safe
-        s = s.astype("string")
-    else:
-        s = pd.Series([pd.NA] * len(df), index=df.index, dtype="string", name="Flags")
-        df["Flags"] = s
-    return df["Flags"]
-
 # ---------------- Sidebar UI ----------------
 with st.sidebar:
     st.header("Filters & Options")
@@ -195,8 +181,8 @@ if uploaded is not None:
     # Safety: ensure required columns exist
     if "Email" not in work.columns:
         work["Email"] = pd.NA
-    flags_series = ensure_flags_series(work)
-    work["Flags"] = flags_series  # make sure column exists and is aligned
+    if "Flags" not in work.columns:
+        work["Flags"] = pd.NA
 
     if drop_no_email:
         work = work.dropna(subset=["Email"])
@@ -225,16 +211,19 @@ if uploaded is not None:
         f = str(flags_val).lower()
         return any(t in f for t in targets)
 
+    # --- SAFETY: use a guarded series so we never KeyError ---
+    flags_series = work["Flags"] if "Flags" in work.columns else pd.Series(pd.NA, index=work.index)
+
     # Apply mode logic using the safe Flags series
     if mode.startswith("Owners"):
         # Owners list — remove renters
-        mask_remove = work["Flags"].apply(lambda v: flags_match(v, renters_only))
+        mask_remove = flags_series.apply(lambda v: flags_match(v, renters_only))
         removed = int(mask_remove.sum())
         work = work.loc[~mask_remove].copy()
         st.info(f"Owners list: removed {removed:,} renter-flagged rows.")
     else:
         # Renters list — remove 'Likely Owner…'
-        mask_remove = work["Flags"].apply(lambda v: flags_match(v, owner_excl))
+        mask_remove = flags_series.apply(lambda v: flags_match(v, owner_excl))
         removed = int(mask_remove.sum())
         work = work.loc[~mask_remove].copy()
         st.info(f"Renters list: removed {removed:,} 'Likely Owner…' rows (owners removed).")
@@ -259,3 +248,5 @@ if uploaded is not None:
 
 else:
     st.info("Upload a DealMachine CSV to get started.")
+
+
